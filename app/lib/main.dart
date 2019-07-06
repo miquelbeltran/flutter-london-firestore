@@ -1,4 +1,15 @@
+import 'dart:ui' as ui;
+
+import 'package:app/firestore/gif_repository.dart';
+import 'package:app/firestore/rating_repository.dart';
+import 'package:app/redux/app_actions.dart';
+import 'package:app/redux/app_middleware.dart';
+import 'package:app/redux/app_reducer.dart';
+import 'package:app/redux/app_state.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_redux/flutter_redux.dart';
+import 'package:redux/redux.dart';
+import 'package:smooth_star_rating/smooth_star_rating.dart';
 
 void main() => runApp(MyApp());
 
@@ -6,106 +17,166 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
+    var store = Store<AppState>(
+      appReducer,
+      initialState: AppState(),
+      middleware: createMiddleware(GifRepository(), RatingRepository()),
+    );
+    store.dispatch(LoadGifsAction());
+    return StoreProvider(
+      store: store,
+      child: MaterialApp(
+        title: 'Gif Review',
+        theme: ThemeData(
+          primarySwatch: Colors.deepPurple,
+        ),
+        home: HomePage(),
       ),
-      home: MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
+class HomePage extends StatelessWidget {
   @override
-  _MyHomePageState createState() => _MyHomePageState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Gif Review'),
+      ),
+      body: StoreConnector<AppState, List<Gif>>(
+        builder: (context, gifs) {
+          return ListView.builder(
+            itemCount: gifs?.length ?? 0,
+            itemBuilder: (context, position) {
+              return GifScore(gifs[position]);
+            },
+          );
+        },
+        converter: (store) => store.state.gifs,
+      ),
+    );
+  }
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class GifScore extends StatelessWidget {
+  Gif gif;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  GifScore(this.gif);
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: InkWell(
+        onTap: () {
+          StoreProvider.of<AppState>(context)
+              .dispatch(LoadRatingsAction(gif.id));
+          Navigator.of(context)
+              .push(MaterialPageRoute(builder: (context) => GifReview(gif)));
+        },
+        child: Column(
+          children: <Widget>[
+            Image.network(gif.url),
+            SmoothStarRating(
+              size: 60,
+              rating: gif.rating,
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class GifReview extends StatefulWidget {
+  final Gif gif;
+
+  GifReview(this.gif);
+
+  @override
+  _GifReviewState createState() => _GifReviewState();
+}
+
+class _GifReviewState extends State<GifReview> {
+  Store<AppState> store;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    store = StoreProvider.of(context);
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    store.dispatch(UnsubscribeAction());
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+      appBar: AppBar(),
+      body: Column(
+        children: <Widget>[
+          Image.network(widget.gif.url),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text(
+              'Your Score',
+              style: Theme.of(context).textTheme.headline,
+            ),
+          ),
+          StoreConnector<AppState, double>(
+            builder: (context, rating) {
+              return SmoothStarRating(
+                size: 60,
+                rating: rating ?? 0,
+                onRatingChanged: (rating) {
+                  StoreProvider.of<AppState>(context)
+                      .dispatch(OnRatingAction(widget.gif.id, rating));
+                },
+              );
+            },
+            converter: (store) => store.state.myRating,
+          ),
+          Expanded(
+            child: StoreConnector<AppState, List<Rating>>(
+              converter: (store) => store.state.ratings,
+              builder: (context, ratings) {
+                return ListView.builder(
+                  itemCount: ratings?.length ?? 0,
+                  itemBuilder: (context, position) {
+                    return Review(ratings[position]);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.display1,
-            ),
-          ],
+    );
+  }
+}
+
+class Review extends StatelessWidget {
+  Rating rating;
+
+  Review(this.rating);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: SmoothStarRating(
+            rating: rating.rating,
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Text(rating.user),
+        ),
+      ],
     );
   }
 }
